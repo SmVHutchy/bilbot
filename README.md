@@ -1,25 +1,25 @@
-# 🤖 KI-gestützter Discord Wissensbot
+#  KI-gestützter Discord Wissensbot
 
 Ein intelligenter Discord-Bot, der als persönliche Wissensdatenbank fungiert. Der Bot sammelt automatisch Nachrichten aus Discord-Channels und ermöglicht KI-gestützte Suche und Anfragen mit Google Gemini AI.
 
-## ✨ Features
+##  Features
 
-### Phase 1: Grundfunktionen ✅
+### Phase 1: Grundfunktionen 
 - **Automatische Nachrichtensammlung**: Sammelt alle Nachrichten aus Discord-Channels
 - **Persistente Speicherung**: Nachrichten werden in `gesammelte_nachrichten.json` gespeichert
 - **Basis-Befehle**: `/hallo`, `/stats`, `/reset`
 
-### Phase 2: KI-Integration ✅
-- **🔍 Intelligente Suche** (`/suche`): KI-gestützte Suche mit Zusammenfassungen
-- **💬 Natürlichsprachige Anfragen** (`/frage`): Stelle Fragen zu deinen Nachrichten
-- **🤖 Google Gemini AI**: Kontextbewusste Antworten basierend auf gesammelten Daten
+### Phase 2: KI-Integration 
+- ** Intelligente Suche** (`/suche`): KI-gestützte Suche mit Zusammenfassungen
+- ** Natürlichsprachige Anfragen** (`/frage`): Stelle Fragen zu deinen Nachrichten
+- **Google Gemini AI**: Kontextbewusste Antworten basierend auf gesammelten Daten
 
 ### Phase 3: Erweiterte Features (geplant)
 - Web-Interface für erweiterte Suche
 - Datenbank-Anbindung für bessere Performance
 - Erweiterte Analyse-Tools
 
-## 🚀 Installation & Setup
+##  Installation & Setup
 
 ### 1. Abhängigkeiten installieren
 ```bash
@@ -49,7 +49,7 @@ GEMINI_API_KEY=dein_gemini_api_key
 2. Erstelle einen neuen API-Key
 3. Kopiere den Key in deine `.env` Datei
 
-> **💡 Kostenlose Gemini API:** Der Bot ist für die kostenlose Gemini API optimiert!
+> ** Kostenlose Gemini API:** Der Bot ist für die kostenlose Gemini API optimiert!
 > - **Rate Limit:** 15 Anfragen pro Minute
 > - **Automatisches Rate Limiting:** 4 Sekunden Wartezeit zwischen API-Aufrufen
 > - **Intelligente Fehlerbehandlung:** Benutzerfreundliche Meldungen bei Limits
@@ -59,7 +59,7 @@ GEMINI_API_KEY=dein_gemini_api_key
 python bot.py
 ```
 
-## 📋 Verfügbare Befehle
+##  Verfügbare Befehle
 
 | Befehl | Beschreibung |
 |--------|-------------|
@@ -80,9 +80,9 @@ Der Bot benötigt folgende Discord-Berechtigungen:
 
 ### Privileged Gateway Intents
 Aktiviere im Discord Developer Portal:
-- ✅ `Message Content Intent`
+-  `Message Content Intent`
 
-## 📊 Datenstruktur
+##  Datenstruktur
 
 Nachrichten werden in folgendem Format gespeichert:
 ```json
@@ -97,7 +97,7 @@ Nachrichten werden in folgendem Format gespeichert:
 }
 ```
 
-## 🤖 KI-Features
+## KI-Features
 
 ### Optimiert für kostenlose Gemini API
 - **Neuestes Modell**: Verwendet `gemini-2.5-flash-lite` für schnellste und kosteneffizienteste Antworten
@@ -106,7 +106,7 @@ Nachrichten werden in folgendem Format gespeichert:
 - **Effiziente Prompts**: Optimierte Anfragen für bessere Performance bei kostenlosen Limits
 - **Fallback-Mechanismen**: Graceful Degradation bei API-Problemen
 
-## 🔧 Discord Bot Best Practices
+## Discord Bot Best Practices
 
 ### Moderne Discord.py Implementation
 - **Slash Commands**: Vollständig auf moderne Slash-Befehle umgestellt
@@ -117,13 +117,13 @@ Nachrichten werden in folgendem Format gespeichert:
 - **Permission Checks**: Admin-Befehle mit korrekter Berechtigungsprüfung
 - **Performance Optimierung**: Nachrichtenlimit und effiziente Datenstrukturen
 
-## 🔒 Sicherheit
+## Sicherheit
 
 - API-Keys werden über Umgebungsvariablen verwaltet
 - Keine Hardcoding von Tokens im Code
 - `.env` Datei ist in `.gitignore` ausgeschlossen
 
-## 🛠️ Entwicklung
+##  Entwicklung
 
 ### Projektstruktur
 ```
@@ -143,19 +143,19 @@ meinkibot/
 - [ ] Export-Funktionen
 - [ ] Backup-System
 
-## 📁 Dateien
+## Dateien
 
 - `bot.py` - Hauptcode des Bots
 - `requirements.txt` - Python-Abhängigkeiten
 - `gesammelte_nachrichten.json` - Gespeicherte Nachrichten (wird automatisch erstellt)
 
-## 🔒 Sicherheitshinweise
+##  Sicherheitshinweise
 
 - **Niemals** deinen Bot-Token öffentlich teilen
 - Bewahre den Token sicher auf
 - Verwende Umgebungsvariablen für den Token in Produktionsumgebungen
 
-## 🎯 Nächste Schritte (Erweiterungen)
+## Nächste Schritte (Erweiterungen)
 
 - SQLite-Datenbank statt JSON-Datei
 - OpenAI API Integration für intelligentere Antworten
@@ -169,7 +169,3 @@ Bei Problemen oder Fragen kannst du:
 1. Die Konsole auf Fehlermeldungen überprüfen
 2. Den `/stats` Befehl verwenden um zu sehen ob Nachrichten gesammelt werden
 3. Sicherstellen, dass der Bot die nötigen Berechtigungen hat
-
----
-
-**Viel Spaß mit deinem persönlichen Wissens-Bot! 🎉**
