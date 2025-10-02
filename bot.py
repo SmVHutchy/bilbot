@@ -10,6 +10,11 @@ from dotenv import load_dotenv
 import re
 import aiohttp
 from bs4 import BeautifulSoup
+import io
+try:
+    import cairosvg
+except Exception:
+    cairosvg = None
 
 # Lade Umgebungsvariablen aus .env Datei
 load_dotenv()
@@ -23,7 +28,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 # Thread-Konfiguration aus .env
-ENABLE_THREADS = os.getenv("ENABLE_THREADS", "false").lower() == "true"
+ENABLE_THREADS = os.getenv("ENABLE_THREADS", "true").lower() == "true"
 try:
     THREAD_AUTO_ARCHIVE_MINUTES = int(os.getenv("THREAD_AUTO_ARCHIVE_MINUTES", "1440"))
 except Exception:
@@ -51,9 +56,78 @@ tree = app_commands.CommandTree(bot)
 
 # Liste zum Speichern der Nachrichten (für Prototypen, später durch Datenbank ersetzen)
 gesammelte_nachrichten = []
+# Thread-Kontexte für kontinuierlichen Dialog in Threads
+thread_contexts: dict[int, dict] = {}
 
 # Datei zum Speichern der Nachrichten
 NACHRICHTEN_DATEI = "gesammelte_nachrichten.json"
+
+# Hilfsfunktionen für Icons (SVG -> PNG für Discord Embeds)
+def load_icon_png_attachment(icon_name: str):
+    # Versuche SVG -> PNG zu konvertieren, wenn cairosvg verfügbar ist
+    if cairosvg is not None:
+        try:
+            svg_path = os.path.join("assets", "icons", f"{icon_name}.svg")
+            with open(svg_path, "rb") as f:
+                svg_data = f.read()
+            png_bytes = cairosvg.svg2png(bytestring=svg_data)
+            filename = f"{icon_name}.png"
+            return discord.File(io.BytesIO(png_bytes), filename=filename)
+        except Exception as e:
+            print(f"⚠️ Icon konnte nicht konvertiert werden ({icon_name}): {e}")
+    # PNG-Fallback: Lade vorhandene PNG-Datei aus dem Dateisystem
+    try:
+        png_path = os.path.join("assets", "icons", f"{icon_name}.png")
+        if os.path.exists(png_path):
+            with open(png_path, "rb") as f:
+                png_bytes = f.read()
+            filename = f"{icon_name}.png"
+            return discord.File(io.BytesIO(png_bytes), filename=filename)
+    except Exception as e:
+        print(f"⚠️ PNG-Fallback fehlgeschlagen ({icon_name}): {e}")
+    return None
+
+
+def apply_embed_icon(embed: discord.Embed, icon_name: str, mode: str = "author", author_name: str | None = None):
+    file = load_icon_png_attachment(icon_name)
+    if file:
+        if mode == "thumbnail":
+            embed.set_thumbnail(url=f"attachment://{file.filename}")
+        else:
+            embed.set_author(name=author_name if author_name else (embed.title or "Info"), icon_url=f"attachment://{file.filename}")
+    return file
+
+# Einheitliche Fehler-Embed-Helferfunktion
+async def send_error_embed(interaction: discord.Interaction, title: str, description: str):
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=0xFF4D4F,
+        timestamp=datetime.now()
+    )
+    icon_file = apply_embed_icon(embed, "alert-triangle", mode="author", author_name="Fehler")
+    try:
+        # Wenn die Interaktion bereits defered/acknowledged ist, nutze Followup
+        if interaction.response.is_done() or getattr(interaction.response, "deferred", False):
+            if icon_file:
+                await interaction.followup.send(embed=embed, file=icon_file, ephemeral=True)
+            else:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            if icon_file:
+                await interaction.response.send_message(embed=embed, file=icon_file, ephemeral=True)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+    except Exception:
+        # Fallback: Followup versuchen
+        try:
+            if icon_file:
+                await interaction.followup.send(embed=embed, file=icon_file, ephemeral=True)
+            else:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception as e:
+            print(f"Fehler beim Senden des Fehler-Embeds: {e}")
+
 
 # Lade bereits gespeicherte Nachrichten beim Start
 def lade_nachrichten():
@@ -180,48 +254,79 @@ def finde_relevante_kanaele(suchbegriff, nachrichten):
 
     return [kanal for kanal, score in sortierte_kanaele]
 
+def extrahiere_schluesselwoerter(text: str) -> list[str]:
+    """Extrahiert einfache Schlüsselwörter (ohne Stopwörter) und führt leichtes Stemming durch."""
+    tokens = re.findall(r"[a-zA-ZäöüÄÖÜß0-9]+", text.lower())
+    stopwoerter = {
+        'welche','was','kannst','kann','mir','dir','du','ich','wir','ihr','sie','ist','sind','war','waren','wurde','wurden',
+        'schon','auch','und','oder','nicht','kein','keine','ohne','mit','zu','über','ueber','für','fuer','von','im','in','auf','am',
+        'die','der','das','ein','eine','einer','eines','dem','den','dass','wie','wo','wann','warum','wieso','weshalb','frage','suche',
+        'informationen','info','infos','ergebnisse','gefunden'
+    }
+    resultat = []
+    for t in tokens:
+        if t in stopwoerter or len(t) <= 2:
+            continue
+        # simples Stemming (deutsch/englisch sehr rudimentär)
+        for suf in ("en", "er", "e", "s", "n"):
+            if t.endswith(suf) and len(t) > len(suf) + 2:
+                t = t[:-len(suf)]
+                break
+        resultat.append(t)
+    # Duplikate entfernen, Reihenfolge beibehalten
+    return list(dict.fromkeys(resultat))
+
 async def hierarchische_suche(suchbegriff):
-    """Führt eine hierarchische Suche durch: erst Kanäle finden, dann innerhalb der Kanäle suchen"""
+    """Führt eine hierarchische Suche durch: erst Kanäle finden, dann innerhalb der Kanäle suchen (Token-basiert)."""
 
     # 1. Finde relevante Kanäle
     relevante_kanaele = finde_relevante_kanaele(suchbegriff, gesammelte_nachrichten)
 
-    # 2. Suche innerhalb der relevanten Kanäle
+    # 2. Token-basierte Suche innerhalb der relevanten Kanäle
     kanal_ergebnisse = {}
-    suchbegriff_lower = suchbegriff.lower()
+    tokens = extrahiere_schluesselwoerter(suchbegriff)
 
     for kanal in relevante_kanaele[:5]:  # Limitiere auf die 5 relevantesten Kanäle
         kanal_nachrichten = []
 
         for nachricht in gesammelte_nachrichten:
             if nachricht.get('channel') == kanal:
-                # Suche im Inhalt
-                if suchbegriff_lower in nachricht.get('inhalt', '').lower():
-                    kanal_nachrichten.append(nachricht)
-                # Suche in URL-Metadaten
-                elif nachricht.get('urls'):
+                inhalt_lower = nachricht.get('inhalt', '').lower()
+                score = 0
+                # Treffer im Inhalt
+                score += sum(1 for tok in tokens if tok in inhalt_lower)
+                # Treffer in URL-Metadaten
+                if nachricht.get('urls'):
                     for url_data in nachricht['urls']:
-                        if (suchbegriff_lower in url_data.get('title', '').lower() or
-                            suchbegriff_lower in url_data.get('description', '').lower()):
-                            kanal_nachrichten.append(nachricht)
+                        titel = url_data.get('title', '').lower()
+                        beschr = url_data.get('description', '').lower()
+                        domain = url_data.get('domain', '').lower()
+                        if any(tok in titel or tok in beschr or tok in domain for tok in tokens):
+                            score += 1
                             break
+                if score > 0:
+                    kanal_nachrichten.append(nachricht)
 
         if kanal_nachrichten:
             kanal_ergebnisse[kanal] = kanal_nachrichten
 
-    # 3. Wenn keine kanalspezifischen Ergebnisse, führe globale Suche durch
+    # 3. Wenn keine kanalspezifischen Ergebnisse, führe globale token-basierte Suche durch
     if not kanal_ergebnisse:
         alle_ergebnisse = []
         for nachricht in gesammelte_nachrichten:
-            if (suchbegriff_lower in nachricht.get('inhalt', '').lower() or
-                suchbegriff_lower in nachricht.get('autor', '').lower()):
-                alle_ergebnisse.append(nachricht)
-            elif nachricht.get('urls'):
+            inhalt_lower = nachricht.get('inhalt', '').lower()
+            score = 0
+            score += sum(1 for tok in tokens if tok in inhalt_lower)
+            if score == 0 and nachricht.get('urls'):
                 for url_data in nachricht['urls']:
-                    if (suchbegriff_lower in url_data.get('title', '').lower() or
-                        suchbegriff_lower in url_data.get('description', '').lower()):
-                        alle_ergebnisse.append(nachricht)
+                    titel = url_data.get('title', '').lower()
+                    beschr = url_data.get('description', '').lower()
+                    domain = url_data.get('domain', '').lower()
+                    if any(tok in titel or tok in beschr or tok in domain for tok in tokens):
+                        score += 1
                         break
+            if score > 0:
+                alle_ergebnisse.append(nachricht)
 
         if alle_ergebnisse:
             return await ki_suche(suchbegriff, alle_ergebnisse[:10])
@@ -234,7 +339,7 @@ async def hierarchische_suche(suchbegriff):
     for kanal, nachrichten in kanal_ergebnisse.items():
         ergebnis_text += f"📂 **#{kanal}** ({len(nachrichten)} Ergebnisse):\n"
 
-        # Verwende KI für intelligente Zusammenfassung pro Kanal
+        # Verwende KI (oder Heuristik) für intelligente Zusammenfassung pro Kanal
         kanal_zusammenfassung = await ki_suche(f"{suchbegriff} in #{kanal}", nachrichten[:5])
         ergebnis_text += f"{kanal_zusammenfassung}\n\n"
 
@@ -636,7 +741,7 @@ async def on_ready():
 # Event-Handler für neue Nachrichten
 @bot.event
 async def on_message(message):
-    """Sammelt automatisch alle Nachrichten für die KI-Wissensdatenbank"""
+    """Sammelt automatisch alle Nachrichten für die KI-Wissensdatenbank und ermöglicht Dialoge in Threads"""
     try:
         # Ignoriere Bot-Nachrichten und eigene Nachrichten
         if message.author.bot:
@@ -645,6 +750,35 @@ async def on_message(message):
         # Ignoriere leere Nachrichten oder nur Attachments
         if not message.content.strip() and not message.attachments:
             return
+
+        # Kontinuierlicher Dialog in Threads: antworte mit kanalgefilterter Suche
+        try:
+            if isinstance(message.channel, discord.Thread):
+                ctx = thread_contexts.get(message.channel.id)
+                if ctx:
+                    antwort_text, _ = await kanalgefilterte_suche(message.content or ctx['suchbegriff'], ctx['kanaele'])
+                    embed = discord.Embed(
+                        title="🧵 Thread-Antwort",
+                        description=antwort_text,
+                        color=0x0099ff,
+                        timestamp=datetime.now()
+                    )
+                    embed.add_field(
+                        name="🧭 Kontext",
+                        value=f"Basisfrage: {ctx['suchbegriff']}\nKanäle: " + ", ".join([f"#{k}" for k in ctx['kanaele']]),
+                        inline=False
+                    )
+                    top_links_thread = extrahiere_top_links(message.content or ctx['suchbegriff'], ctx['kanaele'], limit=5)
+                    if top_links_thread:
+                        links_text = "\n".join([f"[{l['title']}]({l['url']}) · {l['domain']}" for l in top_links_thread])
+                        embed.add_field(name="🔗 Top Links", value=links_text[:1024], inline=False)
+                    icon_file = apply_embed_icon(embed, "question", mode="author", author_name="Thread-Antwort")
+                    if icon_file:
+                        await message.channel.send(embed=embed, file=icon_file)
+                    else:
+                        await message.channel.send(embed=embed)
+        except Exception as e:
+            print(f"Fehler im Thread-Dialog: {e}")
 
         # OPTION: Nur Nachrichten in bestimmten Kanälen sammeln (auskommentiert für alle Kanäle)
         # GEWUENSCHTE_CHANNEL_IDS = [123456789, 987654321]  # Ersetze mit deinen Channel-IDs
@@ -694,7 +828,7 @@ async def on_message(message):
             print(f"Nachrichtenlimit erreicht. Älteste 1000 Nachrichten entfernt. Aktuelle Anzahl: {len(gesammelte_nachrichten)}")
 
         # Kanalvorschläge nur in bestimmten Kanälen anbieten
-        if message.channel.name in ['general', 'sachen']:
+        if hasattr(message.channel, 'name') and message.channel.name in ['general', 'sachen']:
             # Analysiere Nachricht und schlage Kanal vor
             vorschlag = await schlage_kanal_vor(message.content)
 
@@ -773,13 +907,7 @@ async def hallo_command(interaction: discord.Interaction):
 
     except Exception as e:
         print(f"Fehler in hallo_command: {e}")
-        try:
-            if not interaction.response.is_done():
-                await interaction.response.send_message("❌ Ein Fehler ist aufgetreten.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Ein Fehler ist aufgetreten.", ephemeral=True)
-        except:
-            pass
+        await send_error_embed(interaction, "Fehler", "❌ Ein Fehler ist aufgetreten.")
 
 # Hilfsfunktion für KI-gestützte Suche
 # Rate Limiting für kostenlose Gemini API (15 Anfragen pro Minute)
@@ -862,43 +990,177 @@ async def safe_gemini_call(prompt: str) -> str:
 
 async def ki_suche(suchbegriff: str, nachrichten_kontext: list) -> str:
     """Verwendet Gemini AI für intelligente Suche und Antworten"""
-    # Erstelle Kontext aus den relevanten Nachrichten mit URL-Metadaten
-    kontext_text = ""
-    for nachricht in nachrichten_kontext[:10]:  # Limitiere auf 10 Nachrichten für bessere Performance
-        # Basis-Nachrichteninfo
-        nachricht_info = f"Nachricht von {nachricht['autor']} in #{nachricht['channel']}: {nachricht['inhalt']}"
+    # Strukturierter Kontext: Top-N Nachrichten + Link-Snippets (begrenzt für Performance)
+    kontext_items = []
+    for nachricht in nachrichten_kontext[:8]:
+        kanal = nachricht.get('channel', 'unknown')
+        autor = nachricht.get('autor', 'Unbekannt')
+        ts = nachricht.get('zeitstempel', '')
+        inhalt = (nachricht.get('inhalt', '') or '').strip()
+        if len(inhalt) > 220:
+            inhalt = inhalt[:220] + "..."
+        lines = [f"- Kanal #{kanal} · {ts} · {autor}:", f"  {inhalt}"]
+        urls = nachricht.get('urls') or []
+        if urls:
+            lines.append("  📎 Links:")
+            for url_data in urls[:3]:
+                titel = (url_data.get('title') or '').strip()
+                domain = (url_data.get('domain') or '').strip()
+                beschr = (url_data.get('description') or '').strip()
+                if beschr and beschr.lower() != 'keine beschreibung verfügbar':
+                    if len(beschr) > 120:
+                        beschr = beschr[:120] + "..."
+                    lines.append(f"    • {titel} · {domain} — {beschr}")
+                else:
+                    lines.append(f"    • {titel} · {domain}")
+        kontext_items.append("\n".join(lines))
 
-        # URL-Metadaten hinzufügen falls vorhanden
-        if nachricht.get('urls'):
-            nachricht_info += "\n  📎 Geteilte Links:"
-            for url_data in nachricht['urls']:
-                nachricht_info += f"\n    • {url_data['title']} ({url_data['domain']})"
-                if url_data['description'] != 'Keine Beschreibung verfügbar':
-                    nachricht_info += f"\n      Beschreibung: {url_data['description'][:100]}..."
+    kontext_text = "\n".join(kontext_items)
 
-        kontext_text += nachricht_info + "\n\n"
-
-    # Prompt für Gemini AI
+    # Verbesserter Prompt für Gemini: klare Richtlinien und strukturiertes Ausgabeformat
     prompt = f"""
-Du bist ein intelligenter Assistent für eine persönliche Wissensdatenbank.
-Analysiere die folgenden Discord-Nachrichten und beantworte die Suchanfrage des Benutzers.
-
-WICHTIG: Berücksichtige sowohl Nachrichteninhalte als auch Link-Metadaten (Titel, Beschreibungen) bei der Suche.
+Du bist ein hilfreicher Assistent für eine persönliche Wissensdatenbank.
+Beantworte die Suchanfrage basierend AUSSCHLIESSLICH auf den folgenden Discord-Nachrichten und Link-Metadaten.
 
 Suchanfrage: "{suchbegriff}"
 
-Verfügbare Nachrichten (mit Link-Informationen):
+Kontextnachrichten:
 {kontext_text}
 
-Bitte gib eine hilfreiche, zusammenfassende Antwort basierend auf den relevanten Nachrichten und Links.
-- Suche in Nachrichtentexten, Link-Titeln und Beschreibungen
-- Erkenne verwandte Begriffe (z.B. "Font" → "Schriftart", "Typography")
-- Liste gefundene Links mit Titeln und Domains auf
-Wenn keine relevanten Informationen gefunden werden, sage das ehrlich.
-Halte die Antwort prägnant aber informativ (max. 500 Zeichen).
+Richtlinien:
+- Analysiere Nachrichtentexte und Link-Metadaten (Titel, Beschreibungen, Domains).
+- Bevorzuge neuere und mehrfach erwähnte Inhalte, wenn mehrere Optionen vorhanden sind.
+- Nutze verwandte Begriffe (z. B. "Font" ↔ "Schriftart", "Typografie"), aber erfinde keine Fakten.
+- Wenn keine relevanten Informationen vorhanden sind, sage das ehrlich.
+
+Ausgabeformat:
+1) Antwort: Starte mit der Hauptantwort in 1–2 Sätzen (max. 900 Zeichen), klar und direkt.
+2) Belege: Bis zu 4 Bulletpoints mit sehr kurzen Zitaten/Paraphrasen aus relevanten Nachrichten (max. 140 Zeichen je Punkt).
+3) Links: Wenn hilfreich, bis zu 3 relevante Einträge als "Titel (Domain) — kurzer Hinweis".
+
+WICHTIG:
+- Keine Vermutungen außerhalb des Kontexts; vermeide Halluzinationen.
+- Wenn der Kontext unzureichend ist, schreibe: "Keine ausreichend relevanten Informationen gefunden." und nenne ggf. welche Begriffe im Kontext vorkamen.
 """
 
     return await safe_gemini_call(prompt)
+
+# Neue Helferfunktionen für Threads und Top-Links
+async def kanalgefilterte_suche(suchbegriff: str, kanaele: list[str]) -> tuple[str, list[str]]:
+    """Suche nur innerhalb der angegebenen Kanäle. Fallback auf globale Suche, wenn nichts gefunden.
+    Gibt den Ergebnistext und die Liste der Kanäle mit Treffern zurück. Nutzt token-basiertes Matching mit einfachem Stemming und berücksichtigt URL-Metadaten."""
+    if not kanaele:
+        text = await hierarchische_suche(suchbegriff)
+        return text, []
+
+    tokens = extrahiere_schluesselwoerter(suchbegriff)
+    kanal_ergebnisse: dict[str, list] = {}
+
+    for kanal in kanaele:
+        scored_nachrichten = []
+        for nachricht in gesammelte_nachrichten:
+            if nachricht.get('channel') != kanal:
+                continue
+
+            inhalt_lower = nachricht.get('inhalt', '').lower()
+            score = 0
+            # Treffer im Nachrichtentext
+            score += sum(1 for tok in tokens if tok in inhalt_lower)
+
+            # Treffer in URL-Metadaten
+            urls = nachricht.get('urls') or []
+            for url_data in urls:
+                titel = url_data.get('title', '').lower()
+                beschr = url_data.get('description', '').lower()
+                domain = url_data.get('domain', '').lower()
+                if any(tok in titel or tok in beschr or tok in domain for tok in tokens):
+                    score += 1
+                    break
+
+            if score > 0:
+                ts = nachricht.get('zeitstempel')
+                try:
+                    seen = _dt.strptime(ts, '%Y-%m-%d %H:%M:%S') if ts else _dt.min
+                except Exception:
+                    seen = _dt.min
+                scored_nachrichten.append((score, seen, nachricht))
+
+        if scored_nachrichten:
+            # Sortiere nach Score und Aktualität
+            scored_nachrichten.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            kanal_ergebnisse[kanal] = [n for _, _, n in scored_nachrichten]
+
+    if not kanal_ergebnisse:
+        # Nichts in den gefilterten Kanälen gefunden -> globale Suche
+        text = await hierarchische_suche(suchbegriff)
+        return text, []
+
+    # Erstelle KI-gestützte Zusammenfassung pro Kanal
+    ergebnis_text = f"🔍 **Gefilterte Suchergebnisse für '{suchbegriff}':**\n\n"
+    for kanal, nachrichten in kanal_ergebnisse.items():
+        ergebnis_text += f"📂 **#{kanal}** ({len(nachrichten)} Ergebnisse):\n"
+        kanal_zusammenfassung = await ki_suche(f"{suchbegriff} in #{kanal}", nachrichten[:5])
+        ergebnis_text += f"{kanal_zusammenfassung}\n\n"
+
+    kanaele_mit_treffern = list(kanal_ergebnisse.keys())
+    return ergebnis_text, kanaele_mit_treffern
+
+from datetime import datetime as _dt
+
+def extrahiere_top_links(suchbegriff: str, kanaele: list[str] | None = None, limit: int = 5) -> list[dict]:
+    """Extrahiert die Top-Links basierend auf dem Suchbegriff, optional gefiltert nach Kanälen.
+    Nutzt token-basierte Scoring-Logik und berücksichtigt Aktualität."""
+    tokens = extrahiere_schluesselwoerter(suchbegriff)
+    link_stats: dict[str, dict] = {}
+
+    for nachricht in gesammelte_nachrichten:
+        # Optional nach Kanal filtern
+        if kanaele and nachricht.get('channel') not in set(kanaele):
+            continue
+
+        inhalt_lower = nachricht.get('inhalt', '').lower()
+        content_score = sum(1 for tok in tokens if tok in inhalt_lower)
+
+        urls = nachricht.get('urls') or []
+        for url_data in urls:
+            titel = url_data.get('title', '').lower()
+            beschr = url_data.get('description', '').lower()
+            domain = url_data.get('domain', '').lower()
+
+            meta_score = sum(1 for tok in tokens if tok in titel or tok in beschr or tok in domain)
+            total_score = content_score + meta_score
+            if total_score == 0:
+                continue
+
+            url = url_data.get('url') or f"https://{url_data.get('domain','')}"
+            title_out = url_data.get('title') or 'Unbekannter Titel'
+            domain_out = url_data.get('domain') or 'Unbekannte Domain'
+
+            ts = nachricht.get('zeitstempel')
+            try:
+                seen = _dt.strptime(ts, '%Y-%m-%d %H:%M:%S') if ts else _dt.min
+            except Exception:
+                seen = _dt.min
+
+            if url not in link_stats:
+                link_stats[url] = {
+                    'url': url,
+                    'title': title_out,
+                    'domain': domain_out,
+                    'count': 1,
+                    'last_seen': seen,
+                    'score': total_score,
+                }
+            else:
+                link_stats[url]['count'] += 1
+                link_stats[url]['score'] += total_score
+                if seen > link_stats[url]['last_seen']:
+                    link_stats[url]['last_seen'] = seen
+
+    # Sortiere nach Relevanz-Score, Häufigkeit, dann Aktualität
+    sortierte = sorted(link_stats.values(), key=lambda x: (x['score'], x['count'], x['last_seen']), reverse=True)
+    top = sortierte[:limit]
+    return [{'url': t.get('url'), 'title': t.get('title'), 'domain': t.get('domain')} for t in top]
 
 # Slash-Befehl zum Durchsuchen der gesammelten Nachrichten
 @tree.command(name="suche", description="Durchsucht deine gesammelten Nachrichten nach einem Begriff")
@@ -909,7 +1171,16 @@ async def suche_command(interaction: discord.Interaction, suchbegriff: str):
         await interaction.response.defer(thinking=True)
 
         if not gesammelte_nachrichten:
-            await interaction.followup.send("📭 Noch keine Nachrichten gesammelt!")
+            embed = discord.Embed(
+                title="📭 Noch keine Nachrichten gesammelt",
+                description="Ich kann erst suchen, nachdem Nachrichten gesammelt wurden.",
+                color=0xffa500
+            )
+            icon_file = apply_embed_icon(embed, "info", mode="author", author_name="Hinweis")
+            if icon_file:
+                await interaction.followup.send(embed=embed, file=icon_file)
+            else:
+                await interaction.followup.send(embed=embed)
             return
 
         # Verwende hierarchische Suche
@@ -931,19 +1202,24 @@ async def suche_command(interaction: discord.Interaction, suchbegriff: str):
             inline=False
         )
 
+        # Zeige Top-Links
+        top_links = extrahiere_top_links(suchbegriff, relevante_kanaele, limit=5)
+        if top_links:
+            links_text = "\n".join([f"[{l['title']}]({l['url']}) · {l['domain']}" for l in top_links])
+            embed.add_field(name="🔗 Top Links", value=links_text[:1024], inline=False)
+
         embed.set_footer(text=f"Durchsucht: {len(gesammelte_nachrichten)} Nachrichten")
 
-        await interaction.followup.send(embed=embed)
+        # Icon einbinden (Lucide: search)
+        icon_file = apply_embed_icon(embed, "search", mode="author", author_name="Suchergebnisse")
+        if icon_file:
+            await interaction.followup.send(embed=embed, file=icon_file)
+        else:
+            await interaction.followup.send(embed=embed)
 
     except Exception as e:
         print(f"Fehler in suche_command: {e}")
-        try:
-            if not interaction.response.is_done():
-                await interaction.response.send_message("❌ Ein Fehler bei der Suche ist aufgetreten.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Ein Fehler bei der Suche ist aufgetreten.", ephemeral=True)
-        except:
-            pass
+        await send_error_embed(interaction, "Fehler bei der Suche", "❌ Ein Fehler bei der Suche ist aufgetreten.")
 
 # Neuer KI-Chat Befehl für natürlichsprachige Anfragen
 @tree.command(name="frage", description="Stelle eine Frage zu deinen gesammelten Nachrichten")
@@ -954,16 +1230,26 @@ async def frage_command(interaction: discord.Interaction, frage: str):
         await interaction.response.defer(thinking=True)
 
         if not gesammelte_nachrichten:
-            await interaction.followup.send("📭 Noch keine Nachrichten gesammelt! Der Bot muss erst Nachrichten sammeln, bevor ich Fragen beantworten kann.")
+            embed = discord.Embed(
+                title="📭 Noch keine Nachrichten gesammelt",
+                description="Der Bot muss erst Nachrichten sammeln, bevor ich Fragen beantworten kann.",
+                color=0xffa500
+            )
+            icon_file = apply_embed_icon(embed, "info", mode="author", author_name="Hinweis")
+            if icon_file:
+                await interaction.followup.send(embed=embed, file=icon_file)
+            else:
+                await interaction.followup.send(embed=embed)
             return
 
-        # Verwende hierarchische Suche für bessere Kontextualisierung
-        antwort = await hierarchische_suche(frage)
+        # Verwende kanalgefilterte KI-Suche für bessere Kontextualisierung
+        relevante_kanaele = finde_relevante_kanaele(frage, gesammelte_nachrichten)
+        antwort_text, treffer_kanaele = await kanalgefilterte_suche(frage, relevante_kanaele)
 
         # Formatierte Antwort als Embed
         embed = discord.Embed(
             title="🤖 KI-Antwort",
-            description=antwort,
+            description=antwort_text,
             color=0x0099ff,
             timestamp=datetime.now()
         )
@@ -974,14 +1260,49 @@ async def frage_command(interaction: discord.Interaction, frage: str):
         )
 
         # Zeige relevante Kanäle an
-        relevante_kanaele = finde_relevante_kanaele(frage, gesammelte_nachrichten)
+        durchsuchte_text = ", ".join([f"#{kanal}" for kanal in treffer_kanaele[:10]]) if treffer_kanaele else "Globale Suche über alle Kanäle"
         embed.add_field(
-            name="📂 Analysierte Kanäle",
-            value=", ".join([f"#{kanal}" for kanal in relevante_kanaele[:10]]),
+            name="📂 Durchsuchte Kanäle",
+            value=durchsuchte_text,
             inline=False
         )
 
+        # Zeige Top-Links
+        top_links = extrahiere_top_links(frage, treffer_kanaele or relevante_kanaele, limit=5)
+        if top_links:
+            links_text = "\n".join([f"[{l['title']}]({l['url']}) · {l['domain']}" for l in top_links])
+            embed.add_field(name="🔗 Top Links", value=links_text[:1024], inline=False)
+
+        # 📊 Qualitätsmetriken: einfache Trefferquote + Antwortlänge
+        try:
+            tokens = extrahiere_schluesselwoerter(frage)
+            scan_kanaele = treffer_kanaele or relevante_kanaele
+            total_scanned = sum(1 for n in gesammelte_nachrichten if n.get('channel') in scan_kanaele)
+            matched = 0
+            for n in gesammelte_nachrichten:
+                if n.get('channel') not in scan_kanaele:
+                    continue
+                text = (n.get('inhalt') or '').lower()
+                urls = n.get('urls') or []
+                hit = any(t in text for t in tokens)
+                if not hit and urls:
+                    for u in urls:
+                        td = " ".join([(u.get('title') or ''), (u.get('description') or ''), (u.get('domain') or '')]).lower()
+                        if any(t in td for t in tokens):
+                            hit = True
+                            break
+                if hit:
+                    matched += 1
+            hit_ratio = int(round((matched / total_scanned) * 100)) if total_scanned else 0
+            qm_text = f"Trefferquote: {hit_ratio}% ({matched}/{total_scanned}) • Antwortlänge: {len(antwort_text)} Zeichen"
+            embed.add_field(name="📊 Qualitätsmetriken", value=qm_text, inline=False)
+        except Exception as _e:
+            print(f"Qualitätsmetriken Fehler: {_e}")
+
         embed.set_footer(text=f"Basierend auf {len(gesammelte_nachrichten)} Nachrichten")
+
+        # Icon einbinden (Lucide: question)
+        icon_file = apply_embed_icon(embed, "question", mode="author", author_name="KI-Antwort")
 
         # Thread-Integration
         if ENABLE_THREADS and interaction.guild:
@@ -990,45 +1311,118 @@ async def frage_command(interaction: discord.Interaction, frage: str):
                 if perms is None:
                     bot_member = interaction.guild.me
                     perms = interaction.channel.permissions_for(bot_member) if bot_member else interaction.channel.permissions_for(interaction.guild.default_role)
-                if getattr(perms, "create_public_threads", False) and getattr(perms, "send_messages_in_threads", False):
-                    # Sende die Antwortnachricht und erstelle daraus einen Public Thread
-                    msg = await interaction.followup.send(embed=embed)
-                    thread_name = f"Frage: {frage[:80]}"
-                    thread = await interaction.channel.create_thread(
-                        name=thread_name,
-                        message=msg,
-                        auto_archive_duration=THREAD_AUTO_ARCHIVE_MINUTES
-                    )
-                    # Optional Slowmode setzen
-                    if THREAD_SLOWMODE and THREAD_SLOWMODE > 0:
+                # Diagnose: zeige Kanaltyp und Thread-Rechte
+                try:
+                    chan_type = getattr(getattr(interaction.channel, 'type', None), 'name', str(getattr(interaction.channel, 'type', '?')))
+                except Exception:
+                    chan_type = str(getattr(interaction.channel, 'type', '?'))
+                print(f"Thread-Diagnose: Kanal={getattr(interaction.channel, 'name', '?')} Typ={chan_type} create_public_threads={getattr(perms, 'create_public_threads', None)} create_private_threads={getattr(perms, 'create_private_threads', None)} send_messages_in_threads={getattr(perms, 'send_messages_in_threads', None)}")
+                thread_name = f"Frage: {frage[:80]}"
+                if chan_type == 'forum':
+                    try:
+                        # Forum-Fallback: Erstelle einen Post (Thread) direkt im Forum-Kanal mit der KI-Antwort als Erstbeitrag
+                        if icon_file:
+                            thread = await interaction.channel.create_thread(
+                                name=thread_name,
+                                auto_archive_duration=THREAD_AUTO_ARCHIVE_MINUTES,
+                                content=f"Thread für die Frage von {interaction.user.mention}. Weitere Rückfragen bitte hier posten.",
+                                embeds=[embed],
+                                files=[icon_file]
+                            )
+                        else:
+                            thread = await interaction.channel.create_thread(
+                                name=thread_name,
+                                auto_archive_duration=THREAD_AUTO_ARCHIVE_MINUTES,
+                                content=f"Thread für die Frage von {interaction.user.mention}. Weitere Rückfragen bitte hier posten.",
+                                embeds=[embed]
+                            )
+                        # Speichere Thread-Kontext
+                        thread_contexts[thread.id] = {
+                            'suchbegriff': frage,
+                            'kanaele': treffer_kanaele,
+                            'created_by': interaction.user.id,
+                            'created_at': datetime.now().isoformat()
+                        }
+                        # Optional Slowmode setzen
+                        if THREAD_SLOWMODE and THREAD_SLOWMODE > 0:
+                            try:
+                                await thread.edit(slowmode_delay=THREAD_SLOWMODE)
+                            except Exception as e:
+                                print(f"Fehler beim Setzen von Slowmode für Forum-Thread: {e}")
+                        # Bestätigungsnachricht
                         try:
-                            await thread.edit(slowmode_delay=THREAD_SLOWMODE)
+                            await interaction.followup.send(content=f"🧵 Thread erstellt: {thread.mention}", ephemeral=True)
                         except Exception as e:
-                            print(f"Fehler beim Setzen von Slowmode für Thread: {e}")
-                    # Begrüßungsnachricht im Thread
-                    await thread.send(f"Thread für die Frage von {interaction.user.mention}. Weitere Rückfragen bitte hier posten.")
+                            print(f"Followup-Bestätigung im Forum-Kanal fehlgeschlagen: {e}")
+                    except Exception as e:
+                        print(f"Fehler beim Erstellen des Forum-Threads: {e}")
+                        # Fallback: normale Antwort ohne Thread
+                        if icon_file:
+                            await interaction.followup.send(embed=embed, file=icon_file)
+                        else:
+                            await interaction.followup.send(embed=embed)
+                elif getattr(perms, "create_public_threads", False) and getattr(perms, "send_messages_in_threads", False):
+                    # Sende die Antwortnachricht und erstelle daraus einen Public Thread
+                    if icon_file:
+                        msg = await interaction.followup.send(embed=embed, file=icon_file, wait=True)
+                    else:
+                        msg = await interaction.followup.send(embed=embed, wait=True)
+                    # Erstelle Thread basierend auf der gesendeten Nachricht (WebhookMessage -> PartialMessage)
+                    partial_msg = interaction.channel.get_partial_message(msg.id)
+                    try:
+                        thread = await partial_msg.create_thread(
+                            name=thread_name,
+                            auto_archive_duration=THREAD_AUTO_ARCHIVE_MINUTES
+                        )
+                    except Exception as e:
+                        print(f"Fehler bei create_thread für Nachricht: {e}")
+                        thread = None
+                    if thread:
+                        # Speichere Thread-Kontext
+                        thread_contexts[thread.id] = {
+                            'suchbegriff': frage,
+                            'kanaele': treffer_kanaele,
+                            'created_by': interaction.user.id,
+                            'created_at': datetime.now().isoformat()
+                        }
+                        # Optional Slowmode setzen
+                        if THREAD_SLOWMODE and THREAD_SLOWMODE > 0:
+                            try:
+                                await thread.edit(slowmode_delay=THREAD_SLOWMODE)
+                            except Exception as e:
+                                print(f"Fehler beim Setzen von Slowmode für Thread: {e}")
+                        # Begrüßungsnachricht im Thread
+                        await thread.send(f"Thread für die Frage von {interaction.user.mention}. Weitere Rückfragen bitte hier posten.")
+                        # Ephemere Bestätigung
+                        try:
+                            await interaction.followup.send(content=f"🧵 Thread erstellt: {thread.mention}", ephemeral=True)
+                        except Exception as e:
+                            print(f"Followup-Bestätigung im Public-Thread fehlgeschlagen: {e}")
                 else:
                     # Fallback: keine Berechtigungen -> normale Antwort
-                    await interaction.followup.send(embed=embed)
+                    if icon_file:
+                        await interaction.followup.send(embed=embed, file=icon_file)
+                    else:
+                        await interaction.followup.send(embed=embed)
             except Exception as e:
                 print(f"Fehler beim Erstellen des Threads: {e}")
                 try:
-                    await interaction.followup.send(embed=embed)
+                    if icon_file:
+                        await interaction.followup.send(embed=embed, file=icon_file)
+                    else:
+                        await interaction.followup.send(embed=embed)
                 except:
                     pass
         else:
             # Threads deaktiviert oder DM-Kontext -> normale Antwort
-            await interaction.followup.send(embed=embed)
+            if icon_file:
+                await interaction.followup.send(embed=embed, file=icon_file)
+            else:
+                await interaction.followup.send(embed=embed)
 
     except Exception as e:
         print(f"Fehler in frage_command: {e}")
-        try:
-            if not interaction.response.is_done():
-                await interaction.response.send_message("❌ Ein Fehler bei der KI-Anfrage ist aufgetreten.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Ein Fehler bei der KI-Anfrage ist aufgetreten.", ephemeral=True)
-        except:
-            pass
+        await send_error_embed(interaction, "Fehler bei der KI-Anfrage", "❌ Ein Fehler bei der KI-Anfrage ist aufgetreten.")
 
 @tree.command(name="stats", description="Zeigt Statistiken über die gesammelten Nachrichten")
 async def stats_command(interaction: discord.Interaction):
@@ -1042,7 +1436,12 @@ async def stats_command(interaction: discord.Interaction):
                 description="📭 Noch keine Nachrichten gesammelt!",
                 color=0xffa500
             )
-            await interaction.followup.send(embed=embed)
+            # Icon (info/warn)
+            icon_file = apply_embed_icon(embed, "info", mode="author", author_name="Statistiken")
+            if icon_file:
+                await interaction.followup.send(embed=embed, file=icon_file)
+            else:
+                await interaction.followup.send(embed=embed)
             return
 
         # Statistiken berechnen
@@ -1107,17 +1506,16 @@ async def stats_command(interaction: discord.Interaction):
 
         embed.set_footer(text="Statistiken werden live aktualisiert")
 
-        await interaction.followup.send(embed=embed)
+        # Icon für Statistiken
+        icon_file = apply_embed_icon(embed, "bar-chart", mode="author", author_name="Statistiken")
+        if icon_file:
+            await interaction.followup.send(embed=embed, file=icon_file)
+        else:
+            await interaction.followup.send(embed=embed)
 
     except Exception as e:
         print(f"Fehler in stats_command: {e}")
-        try:
-            if not interaction.response.is_done():
-                await interaction.response.send_message("❌ Fehler beim Laden der Statistiken.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Fehler beim Laden der Statistiken.", ephemeral=True)
-        except:
-            pass
+        await send_error_embed(interaction, "Fehler beim Laden der Statistiken", "❌ Fehler beim Laden der Statistiken.")
 
 @tree.command(name="clear", description="Löscht alle gesammelten Nachrichten (nur für Admins)")
 async def clear_command(interaction: discord.Interaction):
@@ -1130,7 +1528,9 @@ async def clear_command(interaction: discord.Interaction):
                 description="Nur Administratoren können die Nachrichten-Datenbank löschen.",
                 color=0xff0000
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            # Icon (alert)
+            icon_file = apply_embed_icon(embed, "alert-triangle", mode="author", author_name="Berechtigung")
+            await interaction.response.send_message(embed=embed, ephemeral=True, file=icon_file) if icon_file else await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -1144,7 +1544,12 @@ async def clear_command(interaction: discord.Interaction):
                 description="Es sind keine Nachrichten zum Löschen vorhanden.",
                 color=0xffa500
             )
-            await interaction.followup.send(embed=embed)
+            # Icon (info)
+            icon_file = apply_embed_icon(embed, "info", mode="author", author_name="Hinweis")
+            if icon_file:
+                await interaction.followup.send(embed=embed, file=icon_file)
+            else:
+                await interaction.followup.send(embed=embed)
             return
 
         # Nachrichten löschen
@@ -1164,20 +1569,19 @@ async def clear_command(interaction: discord.Interaction):
         )
         embed.set_footer(text="Die Nachrichtensammlung beginnt von neuem")
 
-        await interaction.followup.send(embed=embed)
+        # Icon (trash / bar-chart nicht vorhanden, daher alert oder info passend)
+        icon_file = apply_embed_icon(embed, "bar-chart", mode="author", author_name="Bereinigung")
+        if icon_file:
+            await interaction.followup.send(embed=embed, file=icon_file)
+        else:
+            await interaction.followup.send(embed=embed)
 
         # Log-Nachricht für Transparenz
         print(f"Nachrichten-Datenbank geleert von {interaction.user} ({interaction.user.id})")
 
     except Exception as e:
         print(f"Fehler in clear_command: {e}")
-        try:
-            if not interaction.response.is_done():
-                await interaction.response.send_message("❌ Fehler beim Löschen der Nachrichten.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Fehler beim Löschen der Nachrichten.", ephemeral=True)
-        except:
-            pass
+        await send_error_embed(interaction, "Fehler beim Löschen", "❌ Fehler beim Löschen der Nachrichten.")
 
 async def lade_historische_nachrichten():
     """Lädt historische Nachrichten aus allen Kanälen beim Bot-Start"""
