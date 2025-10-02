@@ -33,7 +33,7 @@ Erstelle eine `.env` Datei basierend auf `.env.example`:
 # Discord Bot Configuration
 DISCORD_TOKEN=dein_discord_bot_token
 
-# Google Gemini AI Configuration  
+# Google Gemini AI Configuration
 GEMINI_API_KEY=dein_gemini_api_key
 ```
 
@@ -74,7 +74,7 @@ python bot.py
 ### Bot-Berechtigungen
 Der Bot benötigt folgende Discord-Berechtigungen:
 - `Read Messages`
-- `Send Messages` 
+- `Send Messages`
 - `Use Slash Commands`
 - `Read Message History`
 
