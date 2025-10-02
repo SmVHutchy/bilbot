@@ -22,6 +22,21 @@ intents.message_content = True  # Damit der Bot Nachrichteninhalte lesen darf
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
+# Thread-Konfiguration aus .env
+ENABLE_THREADS = os.getenv("ENABLE_THREADS", "false").lower() == "true"
+try:
+    THREAD_AUTO_ARCHIVE_MINUTES = int(os.getenv("THREAD_AUTO_ARCHIVE_MINUTES", "1440"))
+except Exception:
+    THREAD_AUTO_ARCHIVE_MINUTES = 1440
+try:
+    THREAD_SLOWMODE = int(os.getenv("THREAD_SLOWMODE", "0"))
+except Exception:
+    THREAD_SLOWMODE = 0
+# Zulässige Auto-Archive-Dauern laut Discord API
+_ALLOWED_ARCHIVE = {60, 1440, 4320, 10080}
+if THREAD_AUTO_ARCHIVE_MINUTES not in _ALLOWED_ARCHIVE:
+    THREAD_AUTO_ARCHIVE_MINUTES = 1440
+
 KI_ENABLED = bool(GEMINI_API_KEY)
 if KI_ENABLED:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -968,7 +983,42 @@ async def frage_command(interaction: discord.Interaction, frage: str):
 
         embed.set_footer(text=f"Basierend auf {len(gesammelte_nachrichten)} Nachrichten")
 
-        await interaction.followup.send(embed=embed)
+        # Thread-Integration
+        if ENABLE_THREADS and interaction.guild:
+            try:
+                perms = getattr(interaction, "app_permissions", None)
+                if perms is None:
+                    bot_member = interaction.guild.me
+                    perms = interaction.channel.permissions_for(bot_member) if bot_member else interaction.channel.permissions_for(interaction.guild.default_role)
+                if getattr(perms, "create_public_threads", False) and getattr(perms, "send_messages_in_threads", False):
+                    # Sende die Antwortnachricht und erstelle daraus einen Public Thread
+                    msg = await interaction.followup.send(embed=embed)
+                    thread_name = f"Frage: {frage[:80]}"
+                    thread = await interaction.channel.create_thread(
+                        name=thread_name,
+                        message=msg,
+                        auto_archive_duration=THREAD_AUTO_ARCHIVE_MINUTES
+                    )
+                    # Optional Slowmode setzen
+                    if THREAD_SLOWMODE and THREAD_SLOWMODE > 0:
+                        try:
+                            await thread.edit(slowmode_delay=THREAD_SLOWMODE)
+                        except Exception as e:
+                            print(f"Fehler beim Setzen von Slowmode für Thread: {e}")
+                    # Begrüßungsnachricht im Thread
+                    await thread.send(f"Thread für die Frage von {interaction.user.mention}. Weitere Rückfragen bitte hier posten.")
+                else:
+                    # Fallback: keine Berechtigungen -> normale Antwort
+                    await interaction.followup.send(embed=embed)
+            except Exception as e:
+                print(f"Fehler beim Erstellen des Threads: {e}")
+                try:
+                    await interaction.followup.send(embed=embed)
+                except:
+                    pass
+        else:
+            # Threads deaktiviert oder DM-Kontext -> normale Antwort
+            await interaction.followup.send(embed=embed)
 
     except Exception as e:
         print(f"Fehler in frage_command: {e}")
