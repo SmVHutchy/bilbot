@@ -1,171 +1,226 @@
-#  KI-gestützter Discord Wissensbot
+# BilBot - Intelligente Discord-Nachrichtenverwaltung
 
-Ein intelligenter Discord-Bot, der als persönliche Wissensdatenbank fungiert. Der Bot sammelt automatisch Nachrichten aus Discord-Channels und ermöglicht KI-gestützte Suche und Anfragen mit Google Gemini AI.
+![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.95.0-green)
+![Discord.py](https://img.shields.io/badge/Discord.py-2.0%2B-7289DA)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED)
+![Tests](https://img.shields.io/badge/Tests-Passing-brightgreen)
 
-##  Features
+## 📋 Projektübersicht
 
-### Phase 1: Grundfunktionen
-- **Automatische Nachrichtensammlung**: Sammelt alle Nachrichten aus Discord-Channels
-- **Persistente Speicherung**: Nachrichten werden in `gesammelte_nachrichten.json` gespeichert
-- **Basis-Befehle**: `/hallo`, `/stats`, `/reset`
+BilBot ist eine moderne, skalierbare Lösung zur intelligenten Verwaltung von Discord-Nachrichten mit KI-Integration. Das Projekt kombiniert einen leistungsstarken Discord-Bot mit einer RESTful API, um Nachrichten zu sammeln, zu analysieren und intelligent darauf zu reagieren.
 
-### Phase 2: KI-Integration
-- ** Intelligente Suche** (`/suche`): KI-gestützte Suche mit Zusammenfassungen
-- ** Natürlichsprachige Anfragen** (`/frage`): Stelle Fragen zu deinen Nachrichten
-- **Google Gemini AI**: Kontextbewusste Antworten basierend auf gesammelten Daten
+### 🔑 Hauptfunktionen
 
-### Phase 3: Erweiterte Features (geplant)
-- Web-Interface für erweiterte Suche
-- Datenbank-Anbindung für bessere Performance
-- Erweiterte Analyse-Tools
+- **Nachrichtenverwaltung**: Automatisches Sammeln und Speichern von Discord-Nachrichten
+- **KI-Integration**: Intelligente Antworten mit Google Gemini API
+- **RESTful API**: Vollständige FastAPI-basierte Schnittstelle für Datenzugriff
+- **Containerisierung**: Docker-Unterstützung für einfache Bereitstellung
+- **Testabdeckung**: Umfassende Tests für alle Komponenten
 
-##  Installation & Setup
+## 🏗️ Architektur
 
-### 1. Abhängigkeiten installieren
+Das Projekt folgt einer modernen, modularen Architektur:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Discord    │     │  FastAPI    │     │  Datenbank  │
+│  Bot        │────▶│  Service    │────▶│  (JSON/DB)  │
+└─────────────┘     └─────────────┘     └─────────────┘
+       │                   │                   ▲
+       │                   │                   │
+       └───────────────────┴───────────────────┘
+```
+
+## 📁 Projektstruktur
+
+```
+bilbot/
+├── api/                      # FastAPI-Anwendung
+│   ├── __init__.py
+│   └── app.py                # Hauptanwendung mit API-Endpunkten
+├── assets/                   # Statische Assets
+│   └── icons/                # SVG-Icons für Bot-Antworten
+├── tests/                    # Testverzeichnis
+│   ├── api/                  # API-Tests
+│   │   ├── test_customers.py # Tests für Kunden-Endpunkte
+│   │   ├── test_invoices.py  # Tests für Rechnungs-Endpunkte
+│   │   └── test_messages.py  # Tests für Nachrichten-Endpunkte
+│   ├── conftest.py           # Pytest-Konfiguration
+│   └── test_utils.py         # Test-Hilfsfunktionen
+├── .env.example              # Beispiel für Umgebungsvariablen
+├── .gitignore                # Git-Ignorierungsmuster
+├── .pre-commit-config.yaml   # Pre-Commit-Hooks für Code-Qualität
+├── bot.py                    # Discord-Bot-Implementierung
+├── docker-compose.yml        # Docker-Compose-Konfiguration
+├── Dockerfile.api            # Docker-Konfiguration für API
+├── gesammelte_nachrichten.json # Gespeicherte Discord-Nachrichten
+├── README.md                 # Projektdokumentation
+└── requirements.txt          # Python-Abhängigkeiten
+```
+
+### 🤖 Discord Bot (bot.py)
+
+Der BilBot Discord-Bot bietet:
+- Sammeln und Speichern von Discord-Nachrichten
+- KI-gestützte Antworten mit Google Gemini
+- Thread-Erstellung für organisierte Konversationen
+- Slash-Befehle für einfache Interaktion
+- Suche in gespeicherten Nachrichten
+
+### 🚀 FastAPI-Dienst (api/app.py)
+
+Eine vollständige REST-API mit:
+- Healthcheck-Endpunkt für Monitoring
+- BilBot-spezifische Endpunkte für Discord-Nachrichten:
+  - `GET /messages` - Alle Discord-Nachrichten abrufen (mit Paginierung)
+  - `GET /messages/{message_id}` - Einzelne Nachricht nach ID abrufen
+  - `GET /messages/search` - Nachrichten nach Inhalt, Kanal oder Autor durchsuchen
+  - `GET /messages/stats` - Statistiken über gesammelte Nachrichten abrufen
+- Automatische API-Dokumentation (Swagger UI unter `/docs`)
+- Verbesserte Fehlerbehandlung mit strukturierten Antworten
+- Paginierung und Filterung für effiziente Datenabfragen
+
+## 🛠️ Technologiestack
+
+- **Backend**: Python 3.8+
+- **API-Framework**: FastAPI mit Pydantic für Datenvalidierung
+- **Discord-Integration**: discord.py 2.0+
+- **KI-Integration**: Google Gemini API
+- **Containerisierung**: Docker & Docker Compose
+- **Tests**: pytest
+- **Code-Qualität**: pre-commit Hooks, Black, isort, mypy
+
+## 🚀 Schnellstart-Anleitung
+
+### Voraussetzungen
+
+- Python 3.8+
+- Discord Bot Token ([Discord Developer Portal](https://discord.com/developers/applications))
+- Google Gemini API Key (optional für KI-Funktionen)
+
+### Installation in 3 einfachen Schritten
+
+1. **Projekt einrichten:**
+   ```bash
+   # Abhängigkeiten installieren
+   pip install -r requirements.txt
+
+   # Konfiguration erstellen (.env Datei)
+   # Windows:
+   copy .env.example .env
+   # Linux/Mac:
+   cp .env.example .env
+   ```
+
+2. **Konfiguration anpassen:**
+   Öffne die `.env` Datei und trage deine Zugangsdaten ein:
+   ```
+   DISCORD_TOKEN=dein_discord_bot_token
+   GEMINI_API_KEY=dein_gemini_api_key
+   ```
+
+3. **Starten:**
+   ```bash
+   # API starten
+   python -m api.app
+
+   # In einem neuen Terminal: Bot starten
+   python bot.py
+   ```
+
+### Alternative: Docker-Installation
+
 ```bash
-pip install -r requirements.txt
+# Starten mit Docker Compose
+docker-compose up
 ```
 
-### 2. Umgebungsvariablen konfigurieren
-Erstelle eine `.env` Datei basierend auf `.env.example`:
+## 📚 API-Dokumentation
 
-```env
-# Discord Bot Configuration
-DISCORD_TOKEN=dein_discord_bot_token
+Die API ist unter http://localhost:8001 erreichbar.
 
-# Google Gemini AI Configuration
-GEMINI_API_KEY=dein_gemini_api_key
-```
+### Endpunkte
 
-### 3. API-Keys beschaffen
+#### Allgemein
+- `GET /health` - Healthcheck-Endpunkt
 
-#### Discord Bot Token:
-1. Gehe zu [Discord Developer Portal](https://discord.com/developers/applications)
-2. Erstelle eine neue Application
-3. Gehe zu "Bot" → "Token" → "Copy"
+#### BilBot-Nachrichten
+- `GET /messages` - Liste aller Nachrichten (mit Paginierung)
+- `POST /messages` - Neue Nachricht erstellen
+- `GET /messages/{id}` - Nachrichtendetails abrufen
+- `GET /messages/search` - Nachrichten durchsuchen (Parameter: q, channel, author)
+- `GET /messages/stats` - Statistiken über Nachrichten abrufen
 
-#### Google Gemini API Key:
-1. Gehe zu [Google AI Studio](https://makersuite.google.com/app/apikey)
-2. Erstelle einen neuen API-Key
-3. Kopiere den Key in deine `.env` Datei
+#### Demo-Endpunkte
+- `GET /customers` - Liste aller Kunden
+- `POST /customers` - Neuen Kunden erstellen
+- `GET /customers/{id}` - Kundendetails abrufen
+- `GET /invoices` - Liste aller Rechnungen
+- `POST /invoices` - Neue Rechnung erstellen
+- `GET /invoices/{id}` - Rechnungsdetails abrufen
 
-> ** Kostenlose Gemini API:** Der Bot ist für die kostenlose Gemini API optimiert!
-> - **Rate Limit:** 15 Anfragen pro Minute
-> - **Automatisches Rate Limiting:** 4 Sekunden Wartezeit zwischen API-Aufrufen
-> - **Intelligente Fehlerbehandlung:** Benutzerfreundliche Meldungen bei Limits
+Die interaktive API-Dokumentation (Swagger UI) ist unter http://localhost:8001/docs verfügbar.
 
-### 4. Bot starten
+## 🤖 Discord Bot Dokumentation
+
+### Einrichtung
+
+1. Erstelle eine `.env`-Datei mit folgenden Werten:
+   ```
+   DISCORD_TOKEN=dein_discord_bot_token
+   GEMINI_API_KEY=dein_gemini_api_key
+   ENABLE_THREADS=True
+   THREAD_AUTO_ARCHIVE_MINUTES=1440
+   THREAD_SLOWMODE=0
+   ```
+
+2. Starte den Bot:
+   ```bash
+   python bot.py
+   ```
+
+### Verfügbare Befehle
+
+Der BilBot unterstützt folgende Slash-Befehle:
+
+- `/ping` - Überprüft, ob der Bot online ist
+- `/suche [suchbegriff]` - Durchsucht gespeicherte Nachrichten nach einem Begriff
+- `/frage [frage]` - Stellt eine Frage an die KI (benötigt GEMINI_API_KEY)
+- `/stats` - Zeigt Statistiken über gesammelte Nachrichten
+
+### Automatische Funktionen
+
+- **Nachrichtensammlung**: Der Bot sammelt automatisch Nachrichten in Kanälen, in denen er Leserechte hat
+- **Thread-Erstellung**: Bei Aktivierung erstellt der Bot Threads für organisierte Konversationen
+- **KI-Antworten**: Mit konfiguriertem GEMINI_API_KEY kann der Bot auf Fragen antworten
+
+## 🧪 Tests
+
+Das Projekt enthält umfassende Tests für alle Komponenten:
+
 ```bash
-python bot.py
+# Alle Tests ausführen
+pytest
+
+# Nur API-Tests ausführen
+pytest tests/api/
+
+# Mit Testabdeckung
+pytest --cov=.
 ```
 
-##  Verfügbare Befehle
+## 🔄 CI/CD
 
-| Befehl | Beschreibung |
-|--------|-------------|
-| `/hallo` | Begrüßung und Status des Bots |
-| `/suche [begriff]` | KI-gestützte Suche in gesammelten Nachrichten |
-| `/frage [frage]` | Stelle natürlichsprachige Fragen zu deinen Daten |
-| `/stats` | Zeigt Statistiken über gesammelte Nachrichten |
-| `/reset` | Löscht alle Daten (nur für Admins) |
+Das Projekt ist für kontinuierliche Integration mit GitHub Actions vorbereitet:
+- Automatische Tests bei jedem Push
+- Code-Qualitätsprüfungen mit pre-commit
+- Docker-Image-Erstellung
 
-## 🔧 Konfiguration
+## 📝 Lizenz
 
-### Bot-Berechtigungen
-Der Bot benötigt folgende Discord-Berechtigungen:
-- `Read Messages`
-- `Send Messages`
-- `Use Slash Commands`
-- `Read Message History`
+Dieses Projekt steht unter der MIT-Lizenz - siehe die [LICENSE](LICENSE) Datei für Details.
 
-### Privileged Gateway Intents
-Aktiviere im Discord Developer Portal:
--  `Message Content Intent`
+## 👥 Mitwirkende
 
-##  Datenstruktur
-
-Nachrichten werden in folgendem Format gespeichert:
-```json
-{
-  "id": "nachricht_id",
-  "inhalt": "Nachrichtentext",
-  "autor": "Benutzername",
-  "channel": "channel-name",
-  "server": "Server Name",
-  "datum": "2024-01-01 12:00:00",
-  "link": "https://discord.com/channels/..."
-}
-```
-
-## KI-Features
-
-### Optimiert für kostenlose Gemini API
-- **Neuestes Modell**: Verwendet `gemini-2.5-flash-lite` für schnellste und kosteneffizienteste Antworten
-- **Rate Limiting**: Automatische 3-Sekunden-Wartezeit zwischen API-Aufrufen
-- **Intelligente Fehlerbehandlung**: Spezifische Meldungen für Quota-, Raten- und API-Schlüssel-Probleme
-- **Effiziente Prompts**: Optimierte Anfragen für bessere Performance bei kostenlosen Limits
-- **Fallback-Mechanismen**: Graceful Degradation bei API-Problemen
-
-## Discord Bot Best Practices
-
-### Moderne Discord.py Implementation
-- **Slash Commands**: Vollständig auf moderne Slash-Befehle umgestellt
-- **Automatische Synchronisierung**: Commands werden beim Start automatisch mit Discord synchronisiert
-- **Rich Embeds**: Alle Antworten verwenden ansprechende Discord-Embeds
-- **Proper Error Handling**: Umfassende Fehlerbehandlung für alle Interaktionen
-- **Deferred Responses**: Sofortige Antworten bei längeren Verarbeitungszeiten
-- **Permission Checks**: Admin-Befehle mit korrekter Berechtigungsprüfung
-- **Performance Optimierung**: Nachrichtenlimit und effiziente Datenstrukturen
-
-## Sicherheit
-
-- API-Keys werden über Umgebungsvariablen verwaltet
-- Keine Hardcoding von Tokens im Code
-- `.env` Datei ist in `.gitignore` ausgeschlossen
-
-##  Entwicklung
-
-### Projektstruktur
-```
-meinkibot/
-├── bot.py                    # Hauptbot-Code
-├── requirements.txt          # Python-Abhängigkeiten
-├── .env.example             # Umgebungsvariablen-Template
-├── .env                     # Deine API-Keys (nicht in Git)
-├── gesammelte_nachrichten.json  # Gespeicherte Nachrichten
-└── README.md                # Diese Dokumentation
-```
-
-### Nächste Schritte
-- [ ] Web-Interface implementieren
-- [ ] Datenbank-Integration (PostgreSQL/MongoDB)
-- [ ] Erweiterte Suchfilter
-- [ ] Export-Funktionen
-- [ ] Backup-System
-
-## Dateien
-
-- `bot.py` - Hauptcode des Bots
-- `requirements.txt` - Python-Abhängigkeiten
-- `gesammelte_nachrichten.json` - Gespeicherte Nachrichten (wird automatisch erstellt)
-
-##  Sicherheitshinweise
-
-- **Niemals** deinen Bot-Token öffentlich teilen
-- Bewahre den Token sicher auf
-- Verwende Umgebungsvariablen für den Token in Produktionsumgebungen
-
-## Nächste Schritte (Erweiterungen)
-
-- SQLite-Datenbank statt JSON-Datei
-- OpenAI API Integration für intelligentere Antworten
-- Web-Interface mit Flask
-- Erweiterte Suchfunktionen (Regex, Datum, Autor)
-- Backup-Funktionen
-
-## 📞 Support
-
-Bei Problemen oder Fragen kannst du:
-1. Die Konsole auf Fehlermeldungen überprüfen
-2. Den `/stats` Befehl verwenden um zu sehen ob Nachrichten gesammelt werden
-3. Sicherstellen, dass der Bot die nötigen Berechtigungen hat
+- [Dein Name](https://github.com/yourusername) - Hauptentwickler

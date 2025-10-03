@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BilBot Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-left">
+                <div class="logo">BilBot</div>
+            </div>
+            <div class="header-right">
+                <div class="time-display" id="current-time">00:00 AM CET</div>
+                <div class="user-menu">Dashboard</div>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="main-navigation">
+            <div class="filter-nav">
+                <button class="filter-button active" data-section="messages">Nachrichten</button>
+                <button class="filter-button" data-section="search">Suche</button>
+                <button class="filter-button" data-section="stats">Statistiken</button>
+            </div>
+        </div>
+
+        <!-- Nachrichten Sektion -->
+        <div id="messages" class="section active">
+            <div class="section-header">
+                <h2 class="section-title">Discord Nachrichten</h2>
+                <div class="action-buttons">
+                    <button class="export-button" id="export-button">
+                        <i class="fas fa-download"></i> Exportieren
+                    </button>
+                    <button class="refresh-button" id="refresh-messages">
+                        <i class="fas fa-sync-alt"></i> Aktualisieren
+                    </button>
+                </div>
+            </div>
+
+            <div class="advanced-filters">
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label>Zeitraum</label>
+                        <select id="time-filter">
+                            <option value="all">Alle</option>
+                            <option value="today">Heute</option>
+                            <option value="week">Letzte Woche</option>
+                            <option value="month">Letzter Monat</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Kategorie</label>
+                        <select id="category-filter">
+                            <option value="all">Alle</option>
+                            <option value="info">Information</option>
+                            <option value="warning">Warnung</option>
+                            <option value="error">Fehler</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Suche</label>
+                        <input type="text" id="search-filter" placeholder="Suchbegriff eingeben...">
+                    </div>
+                </div>
+            </div>
+
+            <div id="messages-list" class="messages-container">
+                <p class="loading">Nachrichten werden geladen...</p>
+            </div>
+            <div class="pagination">
+                <button id="prev-page" disabled>Zurück</button>
+                <span id="page-info">Seite 1</span>
+                <button id="next-page">Weiter</button>
+            </div>
+        </div>
+
+        <!-- Detailansicht für Nachrichten -->
+        <div id="message-detail-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="detail-title">Nachrichtendetails</h3>
+                    <span class="close-modal">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div class="detail-info">
+                        <div class="detail-row">
+                            <span class="detail-label">Datum:</span>
+                            <span id="detail-date" class="detail-value"></span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Kategorie:</span>
+                            <span id="detail-category" class="detail-value"></span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Quelle:</span>
+                            <span id="detail-source" class="detail-value"></span>
+                        </div>
+                    </div>
+                    <div class="detail-content">
+                        <h4>Inhalt</h4>
+                        <p id="detail-content"></p>
+                    </div>
+                    <div class="detail-actions">
+                        <button id="detail-export" class="detail-button">
+                            <i class="fas fa-download"></i> Exportieren
+                        </button>
+                        <button id="detail-share" class="detail-button">
+                            <i class="fas fa-share-alt"></i> Teilen
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Such Sektion -->
+        <div id="search" class="section">
+            <div class="section-header">
+                <h2 class="section-title">Nachrichten durchsuchen</h2>
+            </div>
+            <div class="search-form">
+                <div class="form-group">
+                    <label for="search-query">Suchbegriff</label>
+                    <input type="text" id="search-query" placeholder="Suchbegriff eingeben...">
+                </div>
+                <div class="form-group">
+                    <label for="search-channel">Kanal</label>
+                    <input type="text" id="search-channel" placeholder="Kanal (optional)">
+                </div>
+                <div class="form-group">
+                    <label for="search-author">Autor</label>
+                    <input type="text" id="search-author" placeholder="Autor (optional)">
+                </div>
+                <div class="form-group">
+                    <label for="search-limit">Maximale Ergebnisse</label>
+                    <input type="number" id="search-limit" value="20" min="1" max="100">
+                </div>
+                <div class="search-actions">
+                    <button id="search-button">Suchen</button>
+                </div>
+            </div>
+            <div id="search-results-list" class="messages-container">
+                <!-- Suchergebnisse werden hier angezeigt -->
+            </div>
+        </div>
+
+        <!-- Statistik Sektion -->
+        <div id="stats" class="section">
+            <div class="section-header">
+                <h2 class="section-title">Discord Statistiken</h2>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div id="total-messages" class="stat-value">0</div>
+                    <div class="stat-label">Gesamtnachrichten</div>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <h3 class="chart-title">Top Kanäle</h3>
+                <canvas id="channels-chart"></canvas>
+            </div>
+
+            <div class="chart-container">
+                <h3 class="chart-title">Top Autoren</h3>
+                <canvas id="authors-chart"></canvas>
+            </div>
+
+            <div class="chart-container">
+                <h3 class="chart-title">Nachrichten pro Tag</h3>
+                <canvas id="time-chart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js?v=20251003" defer></script>
+</body>
+</html>
